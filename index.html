@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>局域网文件传输</title>
+		<style>
+			body {
+				max-width: 800px;
+				margin: 0 auto;
+				padding: 20px;
+				font-family: Arial, sans-serif;
+				background: #f0f2f5;
+			}
+			.chat-container {
+				background: white;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+				height: 80vh;
+				display: flex;
+				flex-direction: column;
+			}
+			.chat-header {
+				padding: 15px;
+				border-bottom: 1px solid #eee;
+				text-align: center;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+			}
+			.online-devices {
+				position: absolute;
+				right: 20px;
+				background: white;
+				padding: 15px;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+				max-width: 200px;
+			}
+			.device-item {
+				padding: 5px 0;
+				border-bottom: 1px solid #eee;
+			}
+			.chat-messages {
+				flex: 1;
+				overflow-y: auto;
+				padding: 20px;
+			}
+			.message {
+				margin: 10px 0;
+				display: flex;
+				align-items: flex-start;
+			}
+			.message.received {
+				justify-content: flex-start;
+			}
+			.message.sent {
+				justify-content: flex-end;
+			}
+			.message-content {
+				max-width: 70%;
+				padding: 10px 15px;
+				border-radius: 15px;
+				word-break: break-word;
+			}
+			.received .message-content {
+				background: #f0f0f0;
+			}
+			.sent .message-content {
+				background: #0084ff;
+				color: white;
+			}
+			.chat-input {
+				padding: 15px;
+				border-top: 1px solid #eee;
+				display: flex;
+				gap: 10px;
+			}
+			.file-input {
+				display: none;
+			}
+			.file-label {
+				background: #f0f0f0;
+				padding: 10px 20px;
+				border-radius: 20px;
+				cursor: pointer;
+			}
+			.upload-btn {
+				background: #0084ff;
+				color: white;
+				padding: 10px 20px;
+				border: none;
+				border-radius: 20px;
+				cursor: pointer;
+			}
+			.upload-btn:hover {
+				background: #0073e6;
+			}
+			.file-item {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+			}
+			.file-info {
+				font-size: 12px;
+				color: #666;
+			}
+			.file-item a {
+				color: inherit;
+				text-decoration: none;
+			}
+			.download-icon {
+				font-size: 20px;
+			}
+			.progress-bar {
+				height: 4px;
+				background: #eee;
+				border-radius: 2px;
+				margin-top: 5px;
+			}
+			.progress {
+				height: 100%;
+				background: #0084ff;
+				border-radius: 2px;
+				width: 0;
+				transition: width 0.3s;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="online-devices" id="onlineDevices">
+			<h3>在线设备</h3>
+			<div id="deviceList"></div>
+		</div>
+
+		<div class="chat-container">
+			<div class="chat-header">
+				<h2>文件传输聊天室</h2>
+				<span id="deviceName"></span>
+			</div>
+			
+			<div class="chat-messages" id="fileList">
+				<!-- 文件消息将在这里动态显示 -->
+			</div>
+
+			<div class="chat-input">
+				<form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+					<input type="file" name="file" id="file" class="file-input" required>
+					<label for="file" class="file-label">选择文件</label>
+					<button type="submit" class="upload-btn">发送</button>
+				</form>
+			</div>
+		</div>
+
+		<script src="/socket.io/socket.io.js"></script>
+		<script>
+			// 生成随机设备名称
+			const deviceName = `设备_${Math.random().toString(36).substr(2, 6)}`;
+			document.getElementById('deviceName').textContent = deviceName;
+
+			// 连接WebSocket
+			const socket = io();
+
+			// 发送设备信息
+			socket.emit('deviceInfo', {
+				deviceName: deviceName,
+				deviceType: /Mobile|Android|iPhone/i.test(navigator.userAgent) ? '移动设备' : '电脑'
+			});
+
+			// 更新在线设备列表
+			socket.on('updateOnlineDevices', (devices) => {
+				const deviceList = document.getElementById('deviceList');
+				deviceList.innerHTML = devices.map(device => `
+					<div class="device-item">
+						${device.name} (${device.type})
+						<div class="file-info">连接时间: ${device.connectTime}</div>
+					</div>
+				`).join('');
+			});
+
+			function loadFileList() {
+				fetch('/files')
+					.then(response => response.json())
+					.then(files => {
+						const fileList = document.getElementById('fileList');
+						fileList.innerHTML = '';
+						files.forEach(file => {
+							const messageDiv = document.createElement('div');
+							messageDiv.className = 'message received';
+							messageDiv.innerHTML = `
+								<div class="message-content file-item">
+									<span>📄 ${file.name}</span>
+									<div class="file-info">
+										大小: ${formatFileSize(file.size)}<br>
+										上传时间: ${file.uploadTime}
+									</div>
+									<a href="/download/${file.originalName}" download>
+										<span class="download-icon">⬇️</span>
+									</a>
+								</div>
+							`;
+							fileList.appendChild(messageDiv);
+						});
+						fileList.scrollTop = fileList.scrollHeight;
+					})
+					.catch(error => console.error('获取文件列表失败:', error));
+			}
+
+			// 格式化文件大小
+			function formatFileSize(bytes) {
+				if (bytes === 0) return '0 Bytes';
+				const k = 1024;
+				const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+				const i = Math.floor(Math.log(bytes) / Math.log(k));
+				return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+			}
+
+			// 监听文件选择变化
+			document.getElementById('file').addEventListener('change', function(e) {
+				const file = e.target.files[0];
+				if (file) {
+					const messageDiv = document.createElement('div');
+					messageDiv.className = 'message sent';
+					messageDiv.innerHTML = `
+						<div class="message-content">
+							准备上传: ${file.name}<br>
+							<div class="file-info">大小: ${formatFileSize(file.size)}</div>
+							<div class="progress-bar">
+								<div class="progress"></div>
+							</div>
+						</div>
+					`;
+					document.getElementById('fileList').appendChild(messageDiv);
+					document.getElementById('fileList').scrollTop = document.getElementById('fileList').scrollHeight;
+				}
+			});
+
+			// 监听文件上传表单提交
+			document.getElementById('uploadForm').addEventListener('submit', function(e) {
+				const fileInput = document.getElementById('file');
+				const file = fileInput.files[0];
+				if (file && file.size > 500 * 1024 * 1024) { // 500MB限制
+					e.preventDefault();
+					alert('文件大小不能超过500MB');
+					return;
+				}
+			});
+
+			// 监听新文件上传完成
+			socket.on('fileUploaded', (fileInfo) => {
+				loadFileList();
+			});
+
+			// 页面加载时获取文件列表
+			loadFileList();
+
+			// 每30秒刷新一次文件列表
+			setInterval(loadFileList, 30000);
+		</script>
+	</body>
+</html>
